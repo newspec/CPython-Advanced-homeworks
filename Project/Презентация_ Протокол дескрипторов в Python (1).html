@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Протокол дескрипторов в Python</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+  #root { width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState } = React;
+
+const slides = [
+  { id:1,  title:"Протокол дескрипторов в Python", type:"title" },
+  { id:2,  title:"Почему дескрипторы важны?",       type:"motivation" },
+  { id:3,  title:"Что такое дескриптор?",            type:"definition" },
+  { id:4,  title:"Data vs Non-data дескрипторы",     type:"data-vs-nondata" },
+  { id:5,  title:"Attribute Lookup: алгоритм",       type:"lookup" },
+  { id:6,  title:"Как функция становится методом",   type:"methods" },
+  { id:7,  title:"property",                         type:"property" },
+  { id:8,  title:"classmethod и staticmethod",       type:"classmethod" },
+  { id:9,  title:"__slots__",                        type:"slots" },
+  { id:10, title:"CPython: архитектура",             type:"cpython-arch" },
+  { id:11, title:"PyObject_GenericGetAttr",           type:"generic-getattr" },
+  { id:12, title:"_PyType_Lookup и кэш",             type:"type-lookup" },
+  { id:13, title:"Практика: свои дескрипторы",       type:"practice" },
+  { id:14, title:"Бенчмарки",                        type:"benchmarks" },
+  { id:15, title:"Итоги и рекомендации",             type:"conclusions" },
+];
+
+const Code = ({code}) => (
+  <pre style={{fontSize:'11px',lineHeight:'1.5'}}
+       className="bg-gray-900 text-green-300 rounded-lg p-3 overflow-auto font-mono border border-gray-700 whitespace-pre">
+    <code>{code}</code>
+  </pre>
+);
+
+const Box = ({title, children, color="indigo"}) => {
+  const b = {indigo:"border-indigo-400 bg-indigo-50",green:"border-green-400 bg-green-50",
+              orange:"border-orange-400 bg-orange-50",red:"border-red-400 bg-red-50",
+              purple:"border-purple-400 bg-purple-50",gray:"border-gray-300 bg-gray-50",
+              blue:"border-blue-400 bg-blue-50"};
+  const t = {indigo:"text-indigo-700",green:"text-green-700",orange:"text-orange-700",
+             red:"text-red-700",purple:"text-purple-700",gray:"text-gray-700",blue:"text-blue-700"};
+  return (
+    <div className={`border-l-4 rounded-lg p-3 ${b[color]}`}>
+      {title && <div className={`text-xs font-bold uppercase tracking-widest mb-2 ${t[color]}`}>{title}</div>}
+      {children}
+    </div>
+  );
+};
+
+const STitle = ({children}) => (
+  <div className="bg-gradient-to-r from-indigo-700 to-purple-700 text-white px-5 py-2 rounded-xl mb-3 shadow">
+    <h2 className="text-base font-bold">{children}</h2>
+  </div>
+);
+
+function TitleSlide() {
+  return (
+    <div className="flex flex-col items-center justify-center h-full text-center">
+      <div className="text-5xl mb-3">🐍</div>
+      <h1 className="text-3xl font-extrabold text-indigo-700 mb-1">Протокол дескрипторов в Python</h1>
+      <p className="text-lg text-purple-600 font-medium mb-5">и его реализация в CPython</p>
+      <div className="w-20 h-1 bg-gradient-to-r from-indigo-500 to-purple-500 rounded mx-auto mb-6"/>
+      <div className="grid grid-cols-3 gap-4 text-sm text-gray-600 mb-6">
+        {[
+          {icon:"📖",label:"Теория",desc:"__get__, __set__, __delete__"},
+          {icon:"🔧",label:"CPython",desc:"PyObject_GenericGetAttr"},
+          {icon:"⚡",label:"Практика",desc:"Дескрипторы + бенчмарки"},
+        ].map(i=>(
+          <div key={i.label} className="bg-white rounded-xl p-3 shadow border border-gray-100">
+            <div className="text-2xl mb-1">{i.icon}</div>
+            <div className="font-semibold text-indigo-700">{i.label}</div>
+            <div className="text-xs text-gray-500">{i.desc}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MotivationSlide() {
+  return (
+    <div className="flex flex-col h-full">
+      <STitle>Почему дескрипторы важны?</STitle>
+      <div className="grid grid-cols-2 gap-3 flex-1">
+        <Box title="Мы используем их каждый день" color="indigo">
+          <Code code={`class MyClass:
+    @property
+    def value(self): return self._v   # ① дескриптор
+
+    @classmethod
+    def create(cls): ...              # ② дескриптор
+
+    @staticmethod
+    def helper(): ...                 # ③ дескриптор
+
+    __slots__ = ('x', 'y')           # ④ дескрипторы
+
+    def method(self): ...             # ⑤ тоже дескриптор!`}/>
+        </Box>
+        <div className="flex flex-col gap-3">
+          <Box title="Цели работы" color="green">
+            <ul className="space-y-1 text-xs">
+              {["Понять протокол (__get__, __set__, __delete__)","Разобрать порядок поиска атрибутов","Изучить реализацию в CPython (C-код)","Реализовать собственные дескрипторы","Провести сравнительные бенчмарки"].map((t,i)=>(
+                <li key={i} className="flex gap-2 items-start">
+                  <span className="bg-green-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">{i+1}</span>
+                  <span className="text-gray-700">{t}</span>
+                </li>
+              ))}
+            </ul>
+          </Box>
+          <Box title="Главный тезис" color="purple">
+            <p className="text-xs text-gray-700">Дескрипторный протокол — это <strong>фундамент</strong> объектной системы Python. Понять его — значит понять, как Python работает на самом деле.</p>
+          </Box>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DefinitionSlide() {
+  return (
+    <div className="flex flex-col h-full">
+      <STitle>Что такое дескриптор?</STitle>
+      <div className="grid grid-cols-2 gap-3 flex-1">
+        <div className="flex flex-col gap-3">
+          <Box title="Определение" color="indigo">
+            <p className="text-xs text-gray-700">Дескриптор — объект, управляющий доступом к атрибуту <strong>другого</strong> объекта. Должен быть в <code className="bg-indigo-100 px-1 rounded">__dict__</code> <strong>класса</strong>.</p>
+          </Box>
+          <Box title="Три метода протокола" color="blue">
+            <table className="w-full text-xs">
+              <thead><tr className="border-b border-blue-200">
+                <th className="text-left pb-1 text-blue-700">Метод</th>
+                <th className="text-left pb-1 text-blue-700">Когда</th>
+              </tr></thead>
+              <tbody>
+                {[["__get__(self, obj, type)","obj.attr"],["__set__(self, obj, value)","obj.attr = v"],["__delete__(self, obj)","del obj.attr"],["__set_name__(self, owner, name)","при создании класса"]].map(r=>(
+                  <tr key={r[0]} className="border-b border-blue-100">
+                    <td className="py-1 font-mono text-purple-700 text-xs">{r[0]}</td>
+                    <td className="py-1 font-mono text-green-700 text-xs">{r[1]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Box>
+          <Box title="Ключевое условие" color="orange">
+            <p className="text-xs text-gray-700">Дескриптор должен лежать в <code className="bg-orange-100 px-1 rounded">__dict__</code> <strong>класса</strong>, а не экземпляра!</p>
+          </Box>
+        </div>
+        <Box title="Простейший пример" color="gray">
+          <Code code={`class Descriptor:
+    def __set_name__(self, owner, name):
+        self.name = name
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self    # через класс
+        return 42          # через экземпляр
+
+    def __set__(self, obj, value):
+        print(f'SET {self.name} = {value!r}')
+
+    def __delete__(self, obj):
+        print(f'DELETE {self.name}')
+
+class MyClass:
+    x = Descriptor()   # в __dict__ класса!
+
+obj = MyClass()
+print(obj.x)     # → 42
+obj.x = 99       # → SET x = 99
+del obj.x        # → DELETE x
+print(MyClass.x) # → <Descriptor object>`}/>
+        </Box>
+      </div>
+    </div>
+  );
+}
+
+function DataVsNonDataSlide() {
+  return (
+    <div className="flex flex-col h-full">
+      <STitle>Data vs Non-data дескрипторы</STitle>
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        <Box title="Data Descriptor" color="indigo">
+          <p className="text-xs text-gray-600 mb-1">Определяет <code>__set__</code> и/или <code>__delete__</code></p>
+          <div className="flex gap-1 flex-wrap mb-2">
+            {["property","__slots__","Typed","member_descriptor"].map(t=>(
+              <span key={t} className="bg-blue-100 text-blue-800 border border-blue-200 px-2 py-0.5 rounded text-xs font-semibold">{t}</span>
+            ))}
+          </div>
+          <div className="text-xs font-bold text-indigo-700">⬆ Приоритет ВЫШЕ instance.__dict__</div>
+        </Box>
+        <Box title="Non-data Descriptor" color="green">
+          <p className="text-xs text-gray-600 mb-1">Только <code>__get__</code> (нет __set__)</p>
+          <div className="flex gap-1 flex-wrap mb-2">
+            {["function","staticmethod","lazy_property","classmethod"].map(t=>(
+              <span key={t} className="bg-green-100 text-green-800 border border-green-200 px-2 py-0.5 rounded text-xs font-semibold">{t}</span>
+            ))}
+          </div>
+          <div className="text-xs font-bold text-green-700">⬇ Приоритет НИЖЕ instance.__dict__</div>
+        </Box>
+      </div>
+      <Box title="Демонстрация разницы в приоритете" color="gray">
+        <Code code={`class DataDesc:
+    def __get__(self, obj, t=None): return 'DATA DESCRIPTOR'
+    def __set__(self, obj, v): pass      # ← делает data-дескриптором
+
+class NonDataDesc:
+    def __get__(self, obj, t=None): return 'NON-DATA DESCRIPTOR'
+
+class MyClass:
+    d  = DataDesc()
+    nd = NonDataDesc()
+
+obj = MyClass()
+obj.__dict__['d']  = 'INSTANCE'
+obj.__dict__['nd'] = 'INSTANCE'
+
+print(obj.d)    # → 'DATA DESCRIPTOR'   ← дескриптор победил!
+print(obj.nd)   # → 'INSTANCE'          ← __dict__ победил!`}/>
+      </Box>
+    </div>
+  );
+}
+
+function LookupSlide() {
+  return (
+    <div className="flex flex-col h-full">
+      <STitle>Attribute Lookup: алгоритм поиска</STitle>
+      <div className="grid grid-cols-2 gap-3 flex-1">
+        <Box title="Алгоритм object.__getattribute__" color="indigo">
+          <div className="space-y-1.5 text-xs">
+            {[
+              {n:"1",label:"Поиск в MRO класса",desc:"Перебираем type(obj).__mro__",c:"bg-red-100 text-red-800"},
+              {n:"→",label:"Data descriptor?",desc:"Есть __set__ → немедленный возврат",c:"bg-red-200 text-red-900"},
+              {n:"2",label:"instance.__dict__",desc:"Словарь экземпляра",c:"bg-yellow-100 text-yellow-800"},
+              {n:"3",label:"Non-data descriptor",desc:"Есть только __get__",c:"bg-green-100 text-green-800"},
+              {n:"4",label:"Атрибут класса",desc:"Не дескриптор, просто значение",c:"bg-blue-100 text-blue-800"},
+              {n:"✗",label:"AttributeError",desc:"Нигде не найдено",c:"bg-gray-100 text-gray-600"},
+            ].map(s=>(
+              <div key={s.n} className={`flex items-center gap-2 rounded p-1.5 ${s.c}`}>
+                <span className="font-mono font-bold w-4 text-center">{s.n}</span>
+                <div><span className="font-semibold">{s.label}</span> — <span className="opacity-75">{s.desc}</span></div>
+              </div>
+            ))}
+          </div>
+        </Box>
+        <Box title="Демонстрация" color="gray">
+          <Code code={`class Data:
+    def __get__(self, o, t=None): return 'DATA'
+    def __set__(self, o, v): pass
+
+class NonData:
+    def __get__(self, o, t=None): return 'NONDATA'
+
+class C:
+    d   = Data()     # data descriptor
+    nd  = NonData()  # non-data descriptor
+    cls = 'CLASS'    # обычный атрибут
+
+obj = C()
+obj.__dict__['d']   = 'INSTANCE'
+obj.__dict__['nd']  = 'INSTANCE'
+obj.__dict__['cls'] = 'INSTANCE'
+
+print(obj.d)    # → 'DATA'      приоритет 1
+print(obj.nd)   # → 'INSTANCE'  приоритет 2
+print(obj.cls)  # → 'INSTANCE'  приоритет 2
+
+del obj.__dict__['nd'], obj.__dict__['cls']
+print(obj.nd)   # → 'NONDATA'   приоритет 3
+print(obj.cls)  # → 'CLASS'     приоритет 4`}/>
+        </Box>
+      </div>
+    </div>
+  );
+}
+
+function MethodsSlide() {
+  return (
+    <div className="flex flex-col h-full">
+      <STitle>Как функция становится методом</STitle>
+      <div className="grid grid-cols-2 gap-3 flex-1">
+        <div className="flex flex-col gap-3">
+          <Box title="Функция — это non-data дескриптор" color="indigo">
+            <Code code={`def my_func(self): ...
+
+print(hasattr(my_func, '__get__'))  # True
+print(hasattr(my_func, '__set__'))  # False
+#                            ↑
+#             non-data дескриптор!`}/>
+          </Box>
+          <Box title="Механизм привязки" color="green">
+            <div className="text-xs space-y-2">
+              <div className="bg-white rounded p-2 border border-green-200">
+                <div className="font-bold text-green-700 mb-1">Через класс: Dog.bark</div>
+                <code className="text-purple-700">bark.__get__(None, Dog)</code>
+                <div className="text-gray-500">→ обычная функция</div>
+              </div>
+              <div className="bg-white rounded p-2 border border-green-200">
+                <div className="font-bold text-green-700 mb-1">Через экземпляр: dog.bark</div>
+                <code className="text-purple-700">bark.__get__(dog, Dog)</code>
+                <div className="text-gray-500">→ bound method</div>
+              </div>
+            </div>
+          </Box>
+        </div>
+        <Box title="Проверяем в Python" color="gray">
+          <Code code={`class Dog:
+    def bark(self):
+        return f'{self.name}: woof!'
+
+dog = Dog()
+dog.name = 'Rex'
+
+# Через класс → функция
+print(type(Dog.bark))
+# <class 'function'>
+
+# Через экземпляр → bound method
+print(type(dog.bark))
+# <class 'method'>
+
+# Ручной вызов __get__ —
+# именно так делает Python внутри!
+bound = Dog.bark.__get__(dog, Dog)
+print(bound())
+# Rex: woof!
+
+# bound method хранит ссылки
+print(dog.bark.__self__ is dog)      # True
+print(dog.bark.__func__ is Dog.bark) # True`}/>
+        </Box>
+      </div>
+    </div>
+  );
+}
+
+function PropertySlide() {
+  return (
+    <div className="flex flex-col h-full">
+      <STitle>property — самый используемый дескриптор</STitle>
+      <div className="grid grid-cols-2 gap-3 flex-1">
+        <Box title="Использование" color="indigo">
+          <Code code={`class Temperature:
+
+    @property
+    def celsius(self):
+        return self._celsius
+
+    @celsius.setter
+    def celsius(self, value):
+        if value < -273.15:
+            raise ValueError('Ниже абс. нуля!')
+        self._celsius = value
+
+    @property
+    def fahrenheit(self):      # read-only!
+        return self._celsius * 9/5 + 32
+
+t = Temperature()
+t.celsius = 100
+print(t.celsius)      # → 100
+print(t.fahrenheit)   # → 212.0
+
+# property — DATA DESCRIPTOR
+p = Temperature.__dict__['celsius']
+print(type(p))    # <class 'property'>
+print(p.fget)     # <function celsius>`}/>
+        </Box>
+        <div className="flex flex-col gap-3">
+          <Box title="Python-эквивалент property" color="gray">
+            <Code code={`class property:
+    def __init__(self, fget=None,
+                       fset=None, fdel=None):
+        self.fget = fget
+        self.fset = fset
+        self.fdel = fdel
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self         # через класс
+        return self.fget(obj)   # вызов геттера
+
+    def __set__(self, obj, value):
+        self.fset(obj, value)
+
+    def __delete__(self, obj):
+        self.fdel(obj)
+
+    def setter(self, fset):
+        return property(        # НОВЫЙ объект!
+            self.fget, fset, self.fdel
+        )`}/>
+          </Box>
+          <div className="bg-red-50 border border-red-200 rounded p-2 text-xs text-red-700">
+            <strong>ВАЖНО:</strong> property — DATA DESCRIPTOR (есть __set__) → имеет приоритет над __dict__ экземпляра
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClassmethodSlide() {
+  return (
+    <div className="flex flex-col h-full">
+      <STitle>classmethod и staticmethod</STitle>
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        <Box title="classmethod" color="indigo">
+          <Code code={`class Registry:
+    _items = {}
+
+    @classmethod
+    def create(cls, name):
+        obj = cls(name)
+        cls._items[name] = obj
+        return obj
+
+# cls всегда = сам класс
+r = Registry.create('alpha')
+r2 = r.create('beta')  # тоже работает!`}/>
+        </Box>
+        <Box title="staticmethod" color="green">
+          <Code code={`class MathUtils:
+
+    @staticmethod
+    def clamp(v, lo, hi):
+        return max(lo, min(v, hi))
+
+# Ни self, ни cls
+print(MathUtils.clamp(15, 0, 10))  # 10
+m = MathUtils()
+print(m.clamp(-5, 0, 10))          # 0`}/>
+        </Box>
+      </div>
+      <Box title="Сравнение трёх типов методов" color="gray">
+        <table className="w-full text-xs">
+          <thead><tr className="bg-gray-200">
+            {["","regular method","classmethod","staticmethod"].map(h=>(
+              <th key={h} className="text-left p-1.5 font-bold text-gray-700">{h}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {[
+              ["Тип в __dict__","function","classmethod","staticmethod"],
+              ["Первый аргумент","экземпляр (self)","класс (cls)","—"],
+              ["Вид дескриптора","non-data","non-data","non-data"],
+              ["__get__ через экземпляр","bound method","bound cls","сама функция"],
+            ].map(row=>(
+              <tr key={row[0]} className="border-b border-gray-200">
+                {row.map((cell,i)=>(
+                  <td key={i} className={`p-1.5 ${i===0?"font-semibold text-gray-600":"font-mono text-purple-700"}`}>{cell}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Box>
+    </div>
+  );
+}
+
+function SlotsSlide() {
+  return (
+    <div className="flex flex-col h-full">
+      <STitle>__slots__: дескрипторы для экономии памяти</STitle>
+      <div className="grid grid-cols-2 gap-3 flex-1">
+        <div className="flex flex-col gap-2">
+          <Box title="Обычный объект в памяти" color="red">
+            <div className="font-mono text-xs space-y-1">
+              <div className="bg-red-100 rounded px-2 py-1">PyObject header — 16 байт</div>
+              <div className="bg-red-100 rounded px-2 py-1">__dict__ pointer — 8 байт</div>
+              <div className="bg-red-200 rounded px-2 py-1 ml-4">{'{ "x":1, "y":2 } → отдельная хэш-таблица'}</div>
+              <div className="font-bold text-red-600">sys.getsizeof(obj) = 48 байт*</div>
+            </div>
+          </Box>
+          <Box title="Объект со __slots__" color="green">
+            <div className="font-mono text-xs space-y-1">
+              <div className="bg-green-100 rounded px-2 py-1">PyObject header — 16 байт</div>
+              <div className="bg-green-100 rounded px-2 py-1">x — прямо в памяти — 8 байт</div>
+              <div className="bg-green-100 rounded px-2 py-1">y — прямо в памяти — 8 байт</div>
+              <div className="font-bold text-green-600">sys.getsizeof(obj) = 48 байт*</div>
+            </div>
+          </Box>
+          <Box title="Реальный замер: tracemalloc (100k объектов)" color="orange">
+            <div className="text-xs space-y-1">
+              {[["Обычный класс","15.2 МБ","text-red-600"],["__slots__","11.4 МБ","text-green-600"],["Экономия","~1.3×","text-orange-600"]].map(r=>(
+                <div key={r[0]} className="flex justify-between">
+                  <span>{r[0]}</span><span className={`font-bold ${r[2]}`}>{r[1]}</span>
+                </div>
+              ))}
+            </div>
+            <div className="text-xs text-gray-400 mt-1">* sys.getsizeof не учитывает __dict__ — используйте tracemalloc</div>
+          </Box>
+        </div>
+        <Box title="Код и дескриптор" color="gray">
+          <Code code={`class PointDict:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+class PointSlots:
+    __slots__ = ('x', 'y')
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+# Каждый слот → member_descriptor (DATA DESCRIPTOR)
+x = PointSlots.__dict__['x']
+print(type(x))            # <class 'member_descriptor'>
+print(hasattr(x, '__get__'))  # True
+print(hasattr(x, '__set__'))  # True
+
+p = PointSlots(1, 2)
+
+# Нет __dict__ у экземпляра
+print(hasattr(p, '__dict__'))  # False
+
+# Нельзя добавить произвольный атрибут
+try:
+    p.z = 3
+except AttributeError as e:
+    print(e)
+# 'PointSlots' object has no attribute 'z'
+# and no __dict__ for setting new attributes`}/>
+        </Box>
+      </div>
+    </div>
+  );
+}
+
+function CPythonArchSlide() {
+  return (
+    <div className="flex flex-col h-full">
+      <STitle>CPython: объектная система изнутри</STitle>
+      <div className="grid grid-cols-2 gap-3 flex-1">
+        <Box title="PyObject — базовая структура" color="indigo">
+          <Code code={`/* Include/object.h */
+
+typedef struct _object {
+    Py_ssize_t   ob_refcnt;  /* счётчик ссылок */
+    PyTypeObject *ob_type;   /* указатель на тип */
+} PyObject;
+
+/* Каждый Python-объект начинается с этого */
+/* int, str, list, MyClass — всё PyObject */`}/>
+        </Box>
+        <Box title="PyTypeObject — структура типа" color="purple">
+          <Code code={`typedef struct _typeobject {
+    PyObject_VAR_HEAD
+    const char  *tp_name;       /* "int", "str"... */
+    Py_ssize_t   tp_basicsize;  /* размер экземпляра */
+
+    getattrofunc tp_getattro;   /* __getattribute__ */
+    setattrofunc tp_setattro;   /* __setattr__ */
+
+    /* Дескрипторный протокол: */
+    descrgetfunc tp_descr_get;  /* __get__ */
+    descrsetfunc tp_descr_set;  /* __set__ */
+
+    PyObject    *tp_dict;       /* __dict__ класса */
+    PyObject    *tp_mro;        /* кортеж MRO */
+    Py_ssize_t   tp_dictoffset; /* смещение __dict__ */
+} PyTypeObject;`}/>
+        </Box>
+      </div>
+      <Box title="Ключевые поля и их роль" color="gray">
+        <table className="w-full text-xs mt-1">
+          <thead><tr className="bg-gray-200">
+            {["C-поле","Python-эквивалент","Роль в дескрипторах"].map(h=>(
+              <th key={h} className="text-left p-1.5 font-bold text-gray-700">{h}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {[
+              ["tp_descr_get","__get__","Есть → объект является дескриптором"],
+              ["tp_descr_set","__set__","Есть → DATA дескриптор (высший приоритет)"],
+              ["tp_dict","__dict__","Словарь класса, где хранятся дескрипторы"],
+              ["tp_mro","__mro__","Порядок поиска по иерархии классов"],
+            ].map(row=>(
+              <tr key={row[0]} className="border-b border-gray-200">
+                <td className="p-1.5 font-mono text-purple-700">{row[0]}</td>
+                <td className="p-1.5 font-mono text-green-700">{row[1]}</td>
+                <td className="p-1.5 text-gray-600">{row[2]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Box>
+    </div>
+  );
+}
+
+function GenericGetAttrSlide() {
+  return (
+    <div className="flex flex-col h-full">
+      <STitle>PyObject_GenericGetAttr — сердце протокола (Objects/object.c)</STitle>
+      <div className="grid grid-cols-2 gap-3 flex-1">
+        <Box title="C-реализация (аннотированная)" color="indigo">
+          <Code code={`PyObject *
+PyObject_GenericGetAttr(PyObject *obj,
+                        PyObject *name) {
+  PyTypeObject *tp = Py_TYPE(obj);
+
+  /* ШАГ 1: Поиск в MRO класса */
+  PyObject *descr = _PyType_Lookup(tp, name);
+
+  descrgetfunc f = NULL;
+  if (descr != NULL) {
+    f = Py_TYPE(descr)->tp_descr_get;
+
+    /* DATA DESCRIPTOR? */
+    if (f && Py_TYPE(descr)->tp_descr_set) {
+      return f(descr, obj, tp); /* приоритет 1 */
+    }
+  }
+
+  /* ШАГ 2: instance __dict__ */
+  PyObject *dict = *_PyObject_GetDictPtr(obj);
+  if (dict) {
+    PyObject *res = PyDict_GetItem(dict, name);
+    if (res) return res;       /* приоритет 2 */
+  }
+
+  /* ШАГ 3: Non-data descriptor */
+  if (f)
+    return f(descr, obj, tp); /* приоритет 3 */
+
+  /* ШАГ 4: Обычное значение класса */
+  if (descr) return descr;   /* приоритет 4 */
+
+  PyErr_Format(PyExc_AttributeError, ...);
+  return NULL;
+}`}/>
+        </Box>
+        <div className="flex flex-col gap-3">
+          <Box title="Схема алгоритма" color="green">
+            <div className="text-xs space-y-1">
+              {[
+                {s:"1",l:"_PyType_Lookup(tp, name)",d:"обход MRO",c:"text-indigo-700"},
+                {s:"→",l:"tp_descr_set != NULL?",d:"data desc → немедленный возврат",c:"text-red-600"},
+                {s:"2",l:"PyDict_GetItem(dict, name)",d:"словарь экземпляра",c:"text-yellow-700"},
+                {s:"3",l:"f(descr, obj, tp)",d:"non-data __get__",c:"text-green-700"},
+                {s:"4",l:"return descr",d:"обычный атрибут класса",c:"text-blue-700"},
+                {s:"✗",l:"PyErr_Format(...)",d:"AttributeError",c:"text-gray-500"},
+              ].map(s=>(
+                <div key={s.s} className="flex gap-2 items-start">
+                  <span className="font-mono font-bold w-4 text-center text-gray-400">{s.s}</span>
+                  <code className={`font-mono ${s.c} flex-1 text-xs`}>{s.l}</code>
+                  <span className="text-gray-400 text-right text-xs">{s.d}</span>
+                </div>
+              ))}
+            </div>
+          </Box>
+          <Box title="Ключевое условие data descriptor" color="orange">
+            <Code code={`/* DATA = есть tp_descr_get И tp_descr_set */
+if (f != NULL &&
+    Py_TYPE(descr)->tp_descr_set != NULL) {
+    return f(descr, obj, type);
+}`}/>
+          </Box>
+          <Box title="object vs type __getattribute__" color="purple">
+            <div className="text-xs space-y-1.5">
+              <div className="bg-white rounded p-1.5 border border-purple-200">
+                <code className="text-purple-700 font-mono">object.__getattribute__</code>
+                <div className="text-gray-500 mt-0.5">→ вызывается при <code className="bg-gray-100 px-1 rounded">obj.attr</code> (доступ через <strong>экземпляр</strong>)</div>
+                <div className="text-gray-400">реализован как <code className="font-mono">PyObject_GenericGetAttr</code></div>
+              </div>
+              <div className="bg-white rounded p-1.5 border border-purple-200">
+                <code className="text-purple-700 font-mono">type.__getattribute__</code>
+                <div className="text-gray-500 mt-0.5">→ вызывается при <code className="bg-gray-100 px-1 rounded">MyClass.attr</code> (доступ через <strong>класс</strong>)</div>
+                <div className="text-gray-400">передаёт <code className="font-mono">obj=None</code> в <code className="font-mono">__get__</code></div>
+              </div>
+            </div>
+          </Box>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TypeLookupSlide() {
+  return (
+    <div className="flex flex-col h-full">
+      <STitle>_PyType_Lookup и кэширование (Objects/typeobject.c)</STitle>
+      <div className="grid grid-cols-2 gap-3 flex-1">
+        <Box title="_PyType_Lookup — поиск по MRO" color="indigo">
+          <Code code={`PyObject *
+_PyType_Lookup(PyTypeObject *type,
+               PyObject *name)
+{
+    /* Берём кортеж MRO */
+    PyObject *mro = type->tp_mro;
+    Py_ssize_t n = PyTuple_GET_SIZE(mro);
+
+    for (Py_ssize_t i = 0; i < n; i++) {
+
+        /* i-й класс из MRO */
+        PyTypeObject *base =
+          (PyTypeObject*)PyTuple_GET_ITEM(mro, i);
+
+        /* O(1) поиск в __dict__ класса */
+        PyObject *res = PyDict_GetItemWithError(
+            base->tp_dict, name
+        );
+
+        if (res != NULL)
+            return res;   /* Нашли! */
+    }
+    return NULL;  /* Нигде в MRO */
+}`}/>
+        </Box>
+        <div className="flex flex-col gap-3">
+          <Box title="Кэширование через version_tag" color="purple">
+            <Code code={`/* Каждый тип имеет счётчик версии */
+unsigned int tp_version_tag;
+
+/* При изменении класса: */
+static void
+type_modified(PyTypeObject *type) {
+    type->tp_version_tag =
+        next_version_tag++;
+    /* Рекурсивно для всех подклассов */
+}`}/>
+          </Box>
+          <Box title="Python 3.11+: PEP 659" color="green">
+            <p className="text-xs text-gray-700 mb-2"><strong>Specializing Adaptive Interpreter</strong> — inline cache прямо в байткоде:</p>
+            <div className="bg-gray-900 text-green-300 rounded p-2 font-mono text-xs">
+              <div>LOAD_ATTR x</div>
+              <div className="text-yellow-400">↓ после первого выполнения</div>
+              <div>LOAD_ATTR_INSTANCE_VALUE x</div>
+              <div className="text-gray-500"># прямой доступ по смещению!</div>
+            </div>
+            <p className="text-xs text-green-700 font-semibold mt-2">Результат: многократное ускорение горячего кода</p>
+          </Box>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PracticeSlide() {
+  const [active, setActive] = useState(0);
+  const examples = [
+    { name:"Typed", desc:"Типизированный атрибут с валидацией", code:`class Typed:
+    def __set_name__(self, owner, name):
+        self.name = name
+        self.private = f'_typed_{name}'
+
+    def __init__(self, expected_type, validator=None):
+        self.expected_type = expected_type
+        self.validator = validator
+
+    def __get__(self, obj, objtype=None):
+        if obj is None: return self
+        return getattr(obj, self.private, None)
+
+    def __set__(self, obj, value):
+        if not isinstance(value, self.expected_type):
+            raise TypeError(
+                f'{self.name}: ожидался '
+                f'{self.expected_type.__name__}'
+            )
+        if self.validator and not self.validator(value):
+            raise ValueError(f'{self.name}: неверное значение')
+        setattr(obj, self.private, value)
+
+class Person:
+    name = Typed(str, lambda v: len(v) >= 2)
+    age  = Typed(int, lambda v: 0 <= v <= 150)
+
+p = Person()
+p.name = 'Иван'   # OK
+p.age  = 30       # OK
+p.age  = -1       # ValueError!` },
+    { name:"lazy_property", desc:"Ленивое вычисление (кэш в __dict__)", code:`class lazy_property:
+    """Non-data дескриптор: вычисляет один раз,
+    затем кэширует в __dict__ экземпляра."""
+
+    def __init__(self, func):
+        self.func = func
+
+    def __set_name__(self, owner, name):
+        self.attrname = name
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        # non-data → __dict__ имеет приоритет!
+        # После первого вычисления __dict__
+        # перехватывает все последующие обращения
+        if self.attrname not in obj.__dict__:
+            obj.__dict__[self.attrname] = self.func(obj)
+        return obj.__dict__[self.attrname]
+
+class Dataset:
+    def __init__(self, data):
+        self.data = data
+
+    @lazy_property
+    def sorted_data(self):   # вычисляется ОДИН раз
+        return sorted(self.data)
+
+d = Dataset([3, 1, 4, 1, 5])
+print(d.sorted_data)  # вычисляет
+print(d.sorted_data)  # из __dict__ (мгновенно)` },
+    { name:"Observable", desc:"Паттерн Наблюдатель", code:`class Observable:
+    """Уведомляет подписчиков при изменении."""
+
+    def __init__(self, default=None):
+        self.default = default
+        self._callbacks = []
+
+    def __set_name__(self, owner, name):
+        self.name = name
+        self.private = f'_obs_{name}'
+
+    def __get__(self, obj, objtype=None):
+        if obj is None: return self
+        return getattr(obj, self.private, self.default)
+
+    def __set__(self, obj, new_value):
+        old = getattr(obj, self.private, self.default)
+        object.__setattr__(obj, self.private, new_value)
+        if old != new_value:
+            for cb in self._callbacks:
+                cb(obj, self.name, old, new_value)
+
+    def subscribe(self, callback):
+        self._callbacks.append(callback)
+
+class StockPrice:
+    price = Observable(0.0)
+
+def alert(obj, attr, old, new):
+    if old > 0 and abs(new-old)/old > 0.05:
+        print(f'АЛЕРТ: изменение {(new-old)/old*100:+.1f}%')
+
+StockPrice.price.subscribe(alert)
+s = StockPrice()
+s.price = 100.0
+s.price = 85.0   # АЛЕРТ: изменение -15.0%` },
+  ];
+  return (
+    <div className="flex flex-col h-full">
+      <STitle>Практика: собственные дескрипторы</STitle>
+      <div className="flex gap-2 mb-2">
+        {examples.map((ex,i)=>(
+          <button key={ex.name} onClick={()=>setActive(i)}
+            className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${active===i?"bg-indigo-600 text-white shadow":"bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+            {ex.name}
+          </button>
+        ))}
+      </div>
+      <div className="text-xs text-gray-500 mb-2 font-medium">{examples[active].desc}</div>
+      <div className="flex-1">
+        <Box color="gray">
+          <Code code={examples[active].code}/>
+        </Box>
+      </div>
+    </div>
+  );
+}
+
+function BenchmarksSlide() {
+  const data = [
+    {label:"__slots__",           ns:11,  ratio:0.19, color:"bg-green-500"},
+    {label:"Non-data дескриптор", ns:44,  ratio:0.78, color:"bg-indigo-400"},
+    {label:"Data дескриптор",     ns:42,  ratio:0.74, color:"bg-indigo-500"},
+    {label:"Обычный атрибут",     ns:57,  ratio:1.0,  color:"bg-blue-500"},
+    {label:"staticmethod()",      ns:83,  ratio:1.47, color:"bg-yellow-500"},
+    {label:"classmethod()",       ns:92,  ratio:1.63, color:"bg-orange-400"},
+    {label:"property",            ns:127, ratio:2.23, color:"bg-orange-500"},
+    {label:"__getattribute__",    ns:131, ratio:2.31, color:"bg-red-400"},
+    {label:"Вызов метода",        ns:145, ratio:2.55, color:"bg-red-500"},
+  ];
+  return (
+    <div className="flex flex-col h-full">
+      <STitle>Бенчмарки производительности</STitle>
+      <div className="grid grid-cols-2 gap-3 flex-1">
+        <Box title="Время доступа (нс/операцию, меньше = лучше)" color="indigo">
+          <div className="space-y-1.5">
+            {data.map(item=>(
+              <div key={item.label} className="flex items-center gap-2">
+                <div className="text-xs w-36 text-right text-gray-600 flex-shrink-0">{item.label}</div>
+                <div className="flex-1 bg-gray-100 rounded-full h-4 relative">
+                  <div className={`h-4 rounded-full ${item.color} flex items-center justify-end pr-1`}
+                       style={{width:`${(item.ns/145)*100}%`}}>
+                    <span className="text-white text-xs font-bold">{item.ns}нс</span>
+                  </div>
+                </div>
+                <div className="text-xs w-10 text-gray-500">{item.ratio}×</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 text-xs text-gray-400">Baseline: обычный атрибут = 57нс · timeit 2M итераций · Python 3.14 / Apple M-series</div>
+        </Box>
+        <div className="flex flex-col gap-3">
+          <Box title="Объяснение результатов" color="green">
+            <div className="text-xs space-y-2">
+              {[
+                {l:"__slots__ быстрее всех (11нс)",d:"Доступ по C-смещению в памяти, без хэш-таблицы"},
+                {l:"Дескрипторы быстрее обычного атрибута",d:"Non-data/data: 42–44нс vs 57нс — нет накладных расходов __dict__"},
+                {l:"property медленнее в 2.2×",d:"Полноценный Python-вызов fget(obj), создание фрейма"},
+                {l:"Вызов метода медленнее всех (145нс)",d:"Поиск + __get__() + привязка self + вызов + фрейм"},
+              ].map(i=>(
+                <div key={i.l} className="border-l-2 border-green-400 pl-2">
+                  <div className="font-semibold text-green-700">{i.l}</div>
+                  <div className="text-gray-500">{i.d}</div>
+                </div>
+              ))}
+            </div>
+          </Box>
+          <Box title="Потребление памяти (100k объектов, tracemalloc)" color="orange">
+            <div className="space-y-2 text-xs">
+              {[{label:"Обычный класс",mb:8.4,color:"bg-red-400"},{label:"__slots__",mb:4.6,color:"bg-green-400"}].map(item=>(
+                <div key={item.label} className="flex items-center gap-2">
+                  <div className="w-28 text-gray-600">{item.label}</div>
+                  <div className="flex-1 bg-gray-100 rounded-full h-3">
+                    <div className={`h-3 rounded-full ${item.color}`} style={{width:`${(item.mb/8.4)*100}%`}}/>
+                  </div>
+                  <div className="font-bold text-gray-700 w-14 text-right">{item.mb} МБ</div>
+                </div>
+              ))}
+              <div className="text-green-700 font-bold">Экономия: ~1.8× (пик tracemalloc)</div>
+            </div>
+          </Box>
+          <Box title="Вывод" color="purple">
+            <p className="text-xs text-gray-700">Разница в 50нс <strong>несущественна</strong> для 99% задач. Выбирайте по <strong>дизайну</strong>, а не по микробенчмаркам.</p>
+          </Box>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConclusionsSlide() {
+  return (
+    <div className="flex flex-col h-full">
+      <STitle>Итоги и рекомендации</STitle>
+      <div className="grid grid-cols-2 gap-3 flex-1">
+        <div className="flex flex-col gap-3">
+          <Box title="Что изучили" color="indigo">
+            <ul className="text-xs space-y-1">
+              {["Дескриптор = объект с __get__, __set__, __delete__ в __dict__ класса",
+                "Data descriptor → приоритет 1 (выше instance __dict__)",
+                "Instance __dict__ → приоритет 2",
+                "Non-data descriptor → приоритет 3",
+                "Все методы — non-data дескрипторы",
+                "property, classmethod, staticmethod — встроенные дескрипторы на C",
+                "__slots__ → member_descriptor → прямой доступ к памяти"].map((item,i)=>(
+                <li key={i} className="flex gap-2 items-start">
+                  <span className="text-indigo-500 font-bold flex-shrink-0">✓</span>
+                  <span className="text-gray-700">{item}</span>
+                </li>
+              ))}
+            </ul>
+          </Box>
+          <Box title="CPython изнутри" color="purple">
+            <ul className="text-xs space-y-1">
+              {["PyObject_GenericGetAttr — реализует весь алгоритм поиска",
+                "tp_descr_get / tp_descr_set — C-аналоги __get__ / __set__",
+                "_PyType_Lookup обходит MRO с кэшированием",
+                "PEP 659: inline cache в байткоде (Python 3.11+)"].map((item,i)=>(
+                <li key={i} className="flex gap-2 items-start">
+                  <span className="text-purple-500 font-bold flex-shrink-0">✓</span>
+                  <span className="text-gray-700">{item}</span>
+                </li>
+              ))}
+            </ul>
+          </Box>
+        </div>
+        <div className="flex flex-col gap-3">
+          <Box title="Когда что использовать" color="green">
+            <div className="text-xs space-y-1.5">
+              {[
+                {l:"Обычный атрибут",w:"Простые данные, дефолтный выбор",c:"border-blue-400"},
+                {l:"property",w:"Валидация, вычисляемые значения",c:"border-orange-400"},
+                {l:"__slots__",w:"Миллионы объектов, экономия памяти",c:"border-green-400"},
+                {l:"Пользовательский дескриптор",w:"ORM, формы, reactive-системы",c:"border-purple-400"},
+                {l:"__getattribute__",w:"Избегайте без крайней нужды",c:"border-red-400"},
+              ].map(item=>(
+                <div key={item.l} className={`border-l-4 pl-2 rounded ${item.c}`}>
+                  <div className="font-bold text-gray-700">{item.l}</div>
+                  <div className="text-gray-500">{item.w}</div>
+                </div>
+              ))}
+            </div>
+          </Box>
+          <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl p-4 text-white text-center">
+            <div className="text-2xl mb-2">🐍</div>
+            <p className="text-xs font-medium leading-relaxed">
+              Дескрипторный протокол — это не экзотика, а основа Python.<br/>
+              Каждый раз, когда вы пишете <code className="bg-white bg-opacity-20 px-1 rounded">obj.attr</code>, запускается этот механизм.<br/>
+              <strong>Понять его — значит понять Python.</strong>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const slideComponents = {
+  "title": TitleSlide, "motivation": MotivationSlide, "definition": DefinitionSlide,
+  "data-vs-nondata": DataVsNonDataSlide, "lookup": LookupSlide, "methods": MethodsSlide,
+  "property": PropertySlide, "classmethod": ClassmethodSlide, "slots": SlotsSlide,
+  "cpython-arch": CPythonArchSlide, "generic-getattr": GenericGetAttrSlide,
+  "type-lookup": TypeLookupSlide, "practice": PracticeSlide,
+  "benchmarks": BenchmarksSlide, "conclusions": ConclusionsSlide,
+};
+
+function App() {
+  const [current, setCurrent] = useState(0);
+  const slide = slides[current];
+  const SlideComponent = slideComponents[slide.type];
+  const total = slides.length;
+  const go = (dir) => setCurrent(p => Math.max(0, Math.min(total-1, p+dir)));
+
+  React.useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') go(1);
+      if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   go(-1);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  return (
+    <div style={{width:'100vw',height:'100vh',background:'white',display:'flex',flexDirection:'column',overflow:'hidden',margin:0,padding:0}}>
+      <div style={{background:'linear-gradient(to right,#3730a3,#7e22ce)',padding:'8px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0}}>
+        <span style={{color:'white',fontSize:'13px',opacity:0.85}}>🐍 Протокол дескрипторов в Python · CPython</span>
+        <div style={{display:'flex',alignItems:'center',gap:'16px'}}>
+          <span style={{color:'white',fontSize:'12px',opacity:0.6}}>{current+1} / {total}</span>
+          <div style={{display:'flex',gap:'5px'}}>
+            {slides.map((_,i)=>(
+              <button key={i} onClick={()=>setCurrent(i)}
+                style={{width:'9px',height:'9px',borderRadius:'50%',border:'none',cursor:'pointer',
+                        background: i===current ? 'white' : 'rgba(255,255,255,0.3)'}}/>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div style={{flex:1,padding:'24px 32px',overflow:'auto'}}>
+        <SlideComponent/>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
